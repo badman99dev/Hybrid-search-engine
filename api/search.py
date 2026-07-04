@@ -69,10 +69,10 @@ def dedup_previews(previews: list) -> list:
     return [{"engine": "+".join(g[1]), "snippet": g[2]} for g in groups]
 
 
-def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10, tbs: str = None) -> dict:
+def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10, tbs: str = None, page: int = 1) -> dict:
     try:
         url = f"https://google.serper.dev/{endpoint}"
-        body: dict = {"q": query, "gl": gl, "num": num}
+        body: dict = {"q": query, "gl": gl, "num": num, "page": page}
         if tbs:
             body["tbs"] = tbs
         headers = {"X-API-KEY": SERPER_PRIMARY_KEY, "Content-Type": "application/json"}
@@ -88,9 +88,9 @@ def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10, tbs
         return {}
 
 
-def ddgs_text(query: str, max_results: int, backend: str, region: str = "us-en", timelimit: str = None) -> list:
+def ddgs_text(query: str, max_results: int, backend: str, region: str = "us-en", timelimit: str = None, page: int = 1) -> list:
     try:
-        kwargs = {"max_results": max_results, "backend": backend, "region": region, "safesearch": "off"}
+        kwargs = {"max_results": max_results, "backend": backend, "region": region, "safesearch": "off", "page": page}
         if timelimit:
             kwargs["timelimit"] = timelimit
         with DDGS() as ddgs:
@@ -164,6 +164,7 @@ async def search(
     time: str = Query(None, description="Time filter: h (hour), d (day), w (week), m (month), y (year)"),
     type: str = Query("search", description="Search type: search, images, videos, news, places, maps, shopping"),
     engines: str = Query("google,ddg,bing", description="Comma-separated engines to use (default: all). e.g. 'google', 'ddg,bing', 'google,ddg,bing'"),
+    page: str = Query("1", description="Page number(s): '1' or '1,2,3' (max 3 pages, fetched in parallel)"),
 ):
     search_type = type.lower().strip()
     valid_times = ["h", "d", "w", "m", "y"]
@@ -177,49 +178,67 @@ async def search(
     if invalid:
         return JSONResponse(content={"error": f"Invalid engine(s) '{invalid}'. Valid: {valid_engines}"}, status_code=400)
 
+    try:
+        pages = [int(p.strip()) for p in page.split(",") if p.strip()]
+    except ValueError:
+        return JSONResponse(content={"error": f"Invalid page '{page}'. Use page numbers like '1' or '1,2,3'"}, status_code=400)
+    if not pages:
+        return JSONResponse(content={"error": "No valid page numbers provided"}, status_code=400)
+    if len(pages) > 3:
+        return JSONResponse(content={"error": f"Maximum 3 pages allowed, got {len(pages)}"}, status_code=400)
+    pages = sorted(set(pages))
+
     serper_tbs = f"qdr:{time_filter}" if time_filter else None
     ddgs_region = f"{region}-en"
     ddgs_timelimit = time_filter if time_filter and time_filter != "h" else None
 
     if search_type == "search":
-        tasks = []
-        task_names = []
-
         use_google = "google" in selected_engines
         use_ddg = "ddg" in selected_engines and time_filter != "h"
         use_bing = "bing" in selected_engines and time_filter != "h"
 
-        if use_google:
-            tasks.append(asyncio.to_thread(serper_request, "search", q, region, max_results, serper_tbs))
-            task_names.append("google")
-        if use_ddg:
-            tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "html", ddgs_region, ddgs_timelimit))
-            task_names.append("ddg")
-        if use_bing:
-            tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "bing", ddgs_region, ddgs_timelimit))
-            task_names.append("bing")
-
-        if not tasks:
+        if not (use_google or use_ddg or use_bing):
             return JSONResponse(content={"error": "No valid engines selected for this time filter"}, status_code=400)
+
+        tasks = []
+        task_labels = []
+
+        for p in pages:
+            if use_google:
+                tasks.append(asyncio.to_thread(serper_request, "search", q, region, max_results, serper_tbs, p))
+                task_labels.append(("google", p))
+            if use_ddg:
+                tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "html", ddgs_region, ddgs_timelimit, p))
+                task_labels.append(("ddg", p))
+            if use_bing:
+                tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "bing", ddgs_region, ddgs_timelimit, p))
+                task_labels.append(("bing", p))
 
         results = await asyncio.gather(*tasks)
 
-        google_data = {}
-        ddg_results = []
-        bing_results = []
+        all_google_organic = []
+        all_ddg_results = []
+        all_bing_results = []
+        kg = None
+        ab = None
 
-        for name, res in zip(task_names, results):
-            if name == "google":
-                google_data = res
-            elif name == "ddg":
-                ddg_results = res
-            elif name == "bing":
-                bing_results = res
+        for (engine_name, _page_num), res in zip(task_labels, results):
+            if engine_name == "google":
+                all_google_organic.extend(res.get("organic") or [])
+                if kg is None and res.get("knowledgeGraph"):
+                    kg = res.get("knowledgeGraph")
+                if ab is None and res.get("answerBox"):
+                    ab = res.get("answerBox")
+            elif engine_name == "ddg":
+                all_ddg_results.extend(res)
+            elif engine_name == "bing":
+                all_bing_results.extend(res)
 
-        return JSONResponse(content=merge_text_results(google_data, ddg_results, bing_results))
+        google_data = {"organic": all_google_organic, "knowledgeGraph": kg, "answerBox": ab}
+        return JSONResponse(content=merge_text_results(google_data, all_ddg_results, all_bing_results))
 
     elif search_type in ("images", "videos", "news", "places", "maps", "shopping"):
-        data = serper_request(search_type, q, region, max_results, serper_tbs)
+        data = serper_request(search_type, q, region, max_results, serper_tbs, pages[0])
         return JSONResponse(content=data)
 
     else:
@@ -240,5 +259,6 @@ async def root():
             "time": "h, d, w, m, y (optional)",
             "type": "search, images, videos, news, places, maps, shopping (default search)",
             "engines": "google, ddg, bing — comma-separated (default: all)",
+            "page": "1, or 1,2,3 — max 3 pages fetched in parallel (default: 1)",
         },
     }

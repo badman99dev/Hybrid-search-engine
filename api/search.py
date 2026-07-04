@@ -94,30 +94,6 @@ def ddgs_text(query: str, max_results: int, backend: str) -> list:
         return []
 
 
-def ddgs_images(query: str, max_results: int) -> list:
-    try:
-        with DDGS() as ddgs:
-            return list(ddgs.images(query, max_results=max_results))
-    except Exception:
-        return []
-
-
-def ddgs_videos(query: str, max_results: int) -> list:
-    try:
-        with DDGS() as ddgs:
-            return list(ddgs.videos(query, max_results=max_results))
-    except Exception:
-        return []
-
-
-def ddgs_news(query: str, max_results: int) -> list:
-    try:
-        with DDGS() as ddgs:
-            return list(ddgs.news(query, max_results=max_results))
-    except Exception:
-        return []
-
-
 def merge_text_results(google_data: dict, ddg_results: list, bing_results: list) -> dict:
     merged = {}
     order = []
@@ -175,146 +151,6 @@ def merge_text_results(google_data: dict, ddg_results: list, bing_results: list)
     }
 
 
-def merge_image_results(google_data: dict, ddg_results: list) -> dict:
-    merged = {}
-    order = []
-
-    for item in (google_data.get("images") or []):
-        url = item.get("imageUrl", "")
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "imageUrl": url,
-                "thumbnailUrl": item.get("thumbnailUrl", ""),
-                "source": item.get("source", ""),
-                "domain": item.get("domain", ""),
-                "imageWidth": item.get("imageWidth", ""),
-                "imageHeight": item.get("imageHeight", ""),
-                "engines": [],
-            }
-            order.append(key)
-        if "google" not in merged[key]["engines"]:
-            merged[key]["engines"].append("google")
-
-    for item in ddg_results:
-        url = item.get("image", "")
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "imageUrl": url,
-                "thumbnailUrl": item.get("thumbnail", ""),
-                "source": item.get("source", ""),
-                "domain": "",
-                "imageWidth": str(item.get("width", "")),
-                "imageHeight": str(item.get("height", "")),
-                "engines": [],
-            }
-            order.append(key)
-        if "ddg" not in merged[key]["engines"]:
-            merged[key]["engines"].append("ddg")
-
-    images = [merged[key] for key in order]
-    return {"images": images, "total": len(images)}
-
-
-def merge_video_results(google_data: dict, ddg_results: list) -> dict:
-    merged = {}
-    order = []
-
-    for item in (google_data.get("videos") or []):
-        url = item.get("link", item.get("url", ""))
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "url": url,
-                "snippet": item.get("snippet", ""),
-                "source": item.get("source", ""),
-                "duration": item.get("duration", ""),
-                "imageUrl": item.get("imageUrl", ""),
-                "engines": [],
-            }
-            order.append(key)
-        if "google" not in merged[key]["engines"]:
-            merged[key]["engines"].append("google")
-
-    for item in ddg_results:
-        url = item.get("embed_url", item.get("content", ""))
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "url": url,
-                "snippet": item.get("description", ""),
-                "source": item.get("publisher", ""),
-                "duration": item.get("duration", ""),
-                "imageUrl": "",
-                "engines": [],
-            }
-            order.append(key)
-        if "ddg" not in merged[key]["engines"]:
-            merged[key]["engines"].append("ddg")
-
-    videos = [merged[key] for key in order]
-    return {"videos": videos, "total": len(videos)}
-
-
-def merge_news_results(google_data: dict, ddg_results: list) -> dict:
-    merged = {}
-    order = []
-
-    for item in (google_data.get("news") or []):
-        url = item.get("link", "")
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "url": url,
-                "snippet": item.get("snippet", ""),
-                "source": item.get("source", ""),
-                "date": item.get("date", ""),
-                "imageUrl": item.get("imageUrl", ""),
-                "engines": [],
-            }
-            order.append(key)
-        if "google" not in merged[key]["engines"]:
-            merged[key]["engines"].append("google")
-
-    for item in ddg_results:
-        url = item.get("url", "")
-        key = normalize_url(url)
-        if not key:
-            continue
-        if key not in merged:
-            merged[key] = {
-                "title": item.get("title", ""),
-                "url": url,
-                "snippet": item.get("body", ""),
-                "source": item.get("source", ""),
-                "date": item.get("date", ""),
-                "imageUrl": item.get("image", ""),
-                "engines": [],
-            }
-            order.append(key)
-        if "ddg" not in merged[key]["engines"]:
-            merged[key]["engines"].append("ddg")
-
-    news = [merged[key] for key in order]
-    return {"news": news, "total": len(news)}
-
-
 @app.get("/api/search")
 async def search(
     q: str = Query(..., description="Search query"),
@@ -332,28 +168,7 @@ async def search(
         )
         return JSONResponse(content=merge_text_results(google_data, ddg_results, bing_results))
 
-    elif search_type == "images":
-        google_data, ddg_results = await asyncio.gather(
-            asyncio.to_thread(serper_request, "images", q, gl, max_results),
-            asyncio.to_thread(ddgs_images, q, max_results),
-        )
-        return JSONResponse(content=merge_image_results(google_data, ddg_results))
-
-    elif search_type == "videos":
-        google_data, ddg_results = await asyncio.gather(
-            asyncio.to_thread(serper_request, "videos", q, gl, max_results),
-            asyncio.to_thread(ddgs_videos, q, max_results),
-        )
-        return JSONResponse(content=merge_video_results(google_data, ddg_results))
-
-    elif search_type == "news":
-        google_data, ddg_results = await asyncio.gather(
-            asyncio.to_thread(serper_request, "news", q, gl, max_results),
-            asyncio.to_thread(ddgs_news, q, max_results),
-        )
-        return JSONResponse(content=merge_news_results(google_data, ddg_results))
-
-    elif search_type in ("places", "maps", "shopping"):
+    elif search_type in ("images", "videos", "news", "places", "maps", "shopping"):
         data = serper_request(search_type, q, gl, max_results)
         return JSONResponse(content=data)
 

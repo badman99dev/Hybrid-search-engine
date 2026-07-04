@@ -69,10 +69,12 @@ def dedup_previews(previews: list) -> list:
     return [{"engine": "+".join(g[1]), "snippet": g[2]} for g in groups]
 
 
-def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10) -> dict:
+def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10, tbs: str = None) -> dict:
     try:
         url = f"https://google.serper.dev/{endpoint}"
-        body = {"q": query, "gl": gl, "num": num}
+        body: dict = {"q": query, "gl": gl, "num": num}
+        if tbs:
+            body["tbs"] = tbs
         headers = {"X-API-KEY": SERPER_PRIMARY_KEY, "Content-Type": "application/json"}
         with httpx.Client(timeout=15) as client:
             resp = client.post(url, json=body, headers=headers)
@@ -86,10 +88,13 @@ def serper_request(endpoint: str, query: str, gl: str = "us", num: int = 10) -> 
         return {}
 
 
-def ddgs_text(query: str, max_results: int, backend: str) -> list:
+def ddgs_text(query: str, max_results: int, backend: str, region: str = "us-en", timelimit: str = None) -> list:
     try:
+        kwargs = {"max_results": max_results, "backend": backend, "region": region, "safesearch": "off"}
+        if timelimit:
+            kwargs["timelimit"] = timelimit
         with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results, backend=backend))
+            return list(ddgs.text(query, **kwargs))
     except Exception:
         return []
 
@@ -155,21 +160,34 @@ def merge_text_results(google_data: dict, ddg_results: list, bing_results: list)
 async def search(
     q: str = Query(..., description="Search query"),
     max_results: int = Query(10, ge=1, le=30),
-    gl: str = Query("us", description="Country code for Google geo location"),
+    region: str = Query("us", description="Country code for geo location (e.g. 'us', 'in', 'uk')"),
+    time: str = Query(None, description="Time filter: h (hour), d (day), w (week), m (month), y (year)"),
     type: str = Query("search", description="Search type: search, images, videos, news, places, maps, shopping"),
 ):
     search_type = type.lower().strip()
+    valid_times = ["h", "d", "w", "m", "y"]
+    time_filter = time.lower().strip() if time else None
+    if time_filter and time_filter not in valid_times:
+        return JSONResponse(content={"error": f"Invalid time '{time_filter}'. Valid: {valid_times}"}, status_code=400)
+
+    serper_tbs = f"qdr:{time_filter}" if time_filter else None
+    ddgs_region = f"{region}-en"
+    ddgs_timelimit = time_filter if time_filter and time_filter != "h" else None
 
     if search_type == "search":
+        if time_filter == "h":
+            google_data = serper_request("search", q, region, max_results, serper_tbs)
+            return JSONResponse(content=merge_text_results(google_data, [], []))
+
         google_data, ddg_results, bing_results = await asyncio.gather(
-            asyncio.to_thread(serper_request, "search", q, gl, max_results),
-            asyncio.to_thread(ddgs_text, q, max_results, "html"),
-            asyncio.to_thread(ddgs_text, q, max_results, "bing"),
+            asyncio.to_thread(serper_request, "search", q, region, max_results, serper_tbs),
+            asyncio.to_thread(ddgs_text, q, max_results, "html", ddgs_region, ddgs_timelimit),
+            asyncio.to_thread(ddgs_text, q, max_results, "bing", ddgs_region, ddgs_timelimit),
         )
         return JSONResponse(content=merge_text_results(google_data, ddg_results, bing_results))
 
     elif search_type in ("images", "videos", "news", "places", "maps", "shopping"):
-        data = serper_request(search_type, q, gl, max_results)
+        data = serper_request(search_type, q, region, max_results, serper_tbs)
         return JSONResponse(content=data)
 
     else:
@@ -183,4 +201,11 @@ async def root():
         "service": "Hybrid Search Engine",
         "endpoints": ["/api/search"],
         "types": VALID_TYPES,
+        "params": {
+            "q": "Search query (required)",
+            "max_results": "1-30 (default 10)",
+            "region": "us, in, uk, etc. (default us)",
+            "time": "h, d, w, m, y (optional)",
+            "type": "search, images, videos, news, places, maps, shopping (default search)",
+        },
     }

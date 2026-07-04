@@ -6,13 +6,33 @@ from urllib.parse import quote_plus
 
 import httpx
 from ddgs import DDGS
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
 SERPER_PRIMARY_KEY = os.environ.get("SERPER_PRIMARY_KEY", "d4eef379dc53d1a4a1ff607618f673a8b6544ce0")
 SERPER_FALLBACK_KEY = os.environ.get("SERPER_FALLBACK_KEY", "e1ee752adc11668802ff161c4c6f38f52ca52498")
+
+MODE = os.environ.get("MODE", "PROTECTED")
+ACCESS_KEY = os.environ.get("ACCESS_KEY", None)
+
+if MODE != "OPEN" and not ACCESS_KEY:
+    raise RuntimeError("ACCESS_KEY env var is required when MODE is not OPEN")
+
+ACCESS_KEY = ACCESS_KEY or ""
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if MODE != "OPEN":
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {ACCESS_KEY}":
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Unauthorized — valid Authorization header required"},
+            )
+    return await call_next(request)
 
 VALID_TYPES = ["search", "images", "videos", "news", "places", "maps", "shopping"]
 

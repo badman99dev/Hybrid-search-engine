@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/search?q=warmup&max_results=1",
+      "schedule": "*/4 * * * *"
+    }
+  ]
+}

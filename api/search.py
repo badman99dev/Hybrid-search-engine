@@ -113,22 +113,54 @@ def merge_results(google_data: dict, ddg_results: list, bing_results: list) -> d
         if "ddg" not in merged[key]["engines"]:
             merged[key]["engines"].append("ddg")
 
+    import re
+
+    def normalize_snippet(text: str) -> str:
+        """Normalize snippet for dedup: strip dates, whitespace, lowercase."""
+        text = text.strip().lower()
+        # Strip leading date patterns: "Mar 28, 2012 ...", "Apr 17, 2025 ...", "Nov 27, 2019 ..."
+        text = re.sub(r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d+,?\s*\d{4}\s*\.{0,3}\s*", "", text)
+        # Strip "X days ago", "X hours ago" etc
+        text = re.sub(r"^\d+\s+(day|hour|minute|week|month|year)s?\s*ago\s*\.{0,3}\s*", "", text)
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text)
+        return text[:150]
+
+    def snippet_similarity(a: str, b: str) -> float:
+        """Check if two normalized snippets are similar enough to merge."""
+        na, nb = normalize_snippet(a), normalize_snippet(b)
+        if na == nb:
+            return 1.0
+        # Check if one starts with the other (one is truncated)
+        if na.startswith(nb[:80]) or nb.startswith(na[:80]):
+            return 0.9
+        # Check overlap
+        if len(na) > 20 and len(nb) > 20:
+            words_a = set(na.split())
+            words_b = set(nb.split())
+            overlap = len(words_a & words_b) / max(len(words_a | words_b), 1)
+            return overlap
+        return 0.0
+
     deduped_previews = []
     for key in order:
         item = merged[key]
-        seen_snippets = {}
+        # Group similar snippets together
+        groups = []  # [(normalized_key, [engines], snippet)]
         for p in item["previews"]:
-            snip = p["snippet"].strip().lower()[:100]
-            if snip not in seen_snippets:
-                seen_snippets[snip] = [p["engine"]]
-            else:
-                seen_snippets[snip].append(p["engine"])
-        combined = []
-        for snip, engines in seen_snippets.items():
-            combined.append({"engine": "+".join(engines), "snippet": next(
-                p["snippet"] for p in item["previews"] if p["snippet"].strip().lower()[:100] == snip
-            )})
-        item["previews"] = combined
+            matched = False
+            for g in groups:
+                if snippet_similarity(p["snippet"], g[2]) >= 0.75:
+                    g[1].append(p["engine"])
+                    # Keep the longer snippet (more info)
+                    if len(p["snippet"]) > len(g[2]):
+                        g[2] = p["snippet"]
+                    matched = True
+                    break
+            if not matched:
+                groups.append([normalize_snippet(p["snippet"]), [p["engine"]], p["snippet"]])
+
+        item["previews"] = [{"engine": "+".join(g[1]), "snippet": g[2]} for g in groups]
         deduped_previews.append(item)
 
     return {

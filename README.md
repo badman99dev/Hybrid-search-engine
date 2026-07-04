@@ -154,7 +154,8 @@ Vercel Hobby plan supports only daily cron jobs. To keep the function warm (avoi
 
 1. Go to **https://cron-job.org** (free)
 2. Create a job:
-   - URL: `https://YOUR_APP.vercel.app/api/search?q=warmup&max_results=1`
+   - URL: `https://hybrid-search-engine.vercel.app/`
    - Schedule: every 4 minutes
-   - Headers: `Authorization: Bearer YOUR_KEY`
 3. Done — function stays warm, no cold starts
+
+> **Note:** Hitting root `/` returns 401 (unauthorized) but **still keeps the function warm** — cold start happens at function initialization, not at response code. So no auth header needed in cron job, and no Serper/ddgs API calls are made = completely free warmup.

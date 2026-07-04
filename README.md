@@ -38,8 +38,12 @@ Vercel-hosted meta search API that merges results from Google (Serper), DuckDuck
 - `SERPER_PRIMARY_KEY` - Serper.dev API key
 - `SERPER_FALLBACK_KEY` - Fallback Serper key
 
-## Deploy
+## Keep Warm (Free)
 
-1. Import this repo to Vercel
-2. Set environment variables
-3. Deploy
+Vercel Hobby plan supports only daily cron jobs. To keep the function warm (avoid cold starts), set up a free external ping:
+
+1. Go to **https://cron-job.org** (free, no signup needed with GitHub)
+2. Create a job:
+   - URL: `https://YOUR_APP.vercel.app/api/search?q=warmup&max_results=1`
+   - Schedule: every 4 minutes
+3. Done — function stays warm, no cold starts

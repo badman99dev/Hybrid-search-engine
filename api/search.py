@@ -163,6 +163,7 @@ async def search(
     region: str = Query("us", description="Country code for geo location (e.g. 'us', 'in', 'uk')"),
     time: str = Query(None, description="Time filter: h (hour), d (day), w (week), m (month), y (year)"),
     type: str = Query("search", description="Search type: search, images, videos, news, places, maps, shopping"),
+    engines: str = Query("google,ddg,bing", description="Comma-separated engines to use (default: all). e.g. 'google', 'ddg,bing', 'google,ddg,bing'"),
 ):
     search_type = type.lower().strip()
     valid_times = ["h", "d", "w", "m", "y"]
@@ -170,20 +171,51 @@ async def search(
     if time_filter and time_filter not in valid_times:
         return JSONResponse(content={"error": f"Invalid time '{time_filter}'. Valid: {valid_times}"}, status_code=400)
 
+    selected_engines = [e.strip().lower() for e in engines.split(",") if e.strip()]
+    valid_engines = ["google", "ddg", "bing"]
+    invalid = [e for e in selected_engines if e not in valid_engines]
+    if invalid:
+        return JSONResponse(content={"error": f"Invalid engine(s) '{invalid}'. Valid: {valid_engines}"}, status_code=400)
+
     serper_tbs = f"qdr:{time_filter}" if time_filter else None
     ddgs_region = f"{region}-en"
     ddgs_timelimit = time_filter if time_filter and time_filter != "h" else None
 
     if search_type == "search":
-        if time_filter == "h":
-            google_data = serper_request("search", q, region, max_results, serper_tbs)
-            return JSONResponse(content=merge_text_results(google_data, [], []))
+        tasks = []
+        task_names = []
 
-        google_data, ddg_results, bing_results = await asyncio.gather(
-            asyncio.to_thread(serper_request, "search", q, region, max_results, serper_tbs),
-            asyncio.to_thread(ddgs_text, q, max_results, "html", ddgs_region, ddgs_timelimit),
-            asyncio.to_thread(ddgs_text, q, max_results, "bing", ddgs_region, ddgs_timelimit),
-        )
+        use_google = "google" in selected_engines
+        use_ddg = "ddg" in selected_engines and time_filter != "h"
+        use_bing = "bing" in selected_engines and time_filter != "h"
+
+        if use_google:
+            tasks.append(asyncio.to_thread(serper_request, "search", q, region, max_results, serper_tbs))
+            task_names.append("google")
+        if use_ddg:
+            tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "html", ddgs_region, ddgs_timelimit))
+            task_names.append("ddg")
+        if use_bing:
+            tasks.append(asyncio.to_thread(ddgs_text, q, max_results, "bing", ddgs_region, ddgs_timelimit))
+            task_names.append("bing")
+
+        if not tasks:
+            return JSONResponse(content={"error": "No valid engines selected for this time filter"}, status_code=400)
+
+        results = await asyncio.gather(*tasks)
+
+        google_data = {}
+        ddg_results = []
+        bing_results = []
+
+        for name, res in zip(task_names, results):
+            if name == "google":
+                google_data = res
+            elif name == "ddg":
+                ddg_results = res
+            elif name == "bing":
+                bing_results = res
+
         return JSONResponse(content=merge_text_results(google_data, ddg_results, bing_results))
 
     elif search_type in ("images", "videos", "news", "places", "maps", "shopping"):
@@ -207,5 +239,6 @@ async def root():
             "region": "us, in, uk, etc. (default us)",
             "time": "h, d, w, m, y (optional)",
             "type": "search, images, videos, news, places, maps, shopping (default search)",
+            "engines": "google, ddg, bing — comma-separated (default: all)",
         },
     }

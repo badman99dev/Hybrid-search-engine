@@ -137,9 +137,9 @@ curl -H "Authorization: Bearer YOUR_KEY" \
 
 ## Tech Stack
 
+- **[ddgs](https://github.com/deedy5/ddgs)** — DuckDuckGo + Bing metasearch library by [deedy5](https://github.com/deedy5)
+- **[Serper.dev](https://serper.dev)** — Google search API
 - **FastAPI** — Python web framework
-- **ddgs** — DuckDuckGo + Bing scraping library
-- **Serper.dev** — Google search API
 - **Vercel** — Serverless hosting (Python runtime)
 - **asyncio.gather** — Parallel engine fetching
 

@@ -143,6 +143,11 @@ curl -H "Authorization: Bearer YOUR_KEY" \
 - **Vercel** — Serverless hosting (Python runtime)
 - **asyncio.gather** — Parallel engine fetching
 
+## Special Thanks
+
+- **[deedy5](https://github.com/deedy5)** — creator of [ddgs](https://github.com/deedy5/ddgs) (formerly `duckduckgo-search`) and [primp](https://github.com/deedy5/primp). Without ddgs, the multi-engine merge (DuckDuckGo + Bing) wouldn't be possible. This project heavily relies on ddgs for scraping DuckDuckGo and Bing results in parallel.
+- **[Serper.dev](https://serper.dev)** — for providing a fast and reliable Google Search API.
+
 ## Keep Warm (Free)
 
 Vercel Hobby plan supports only daily cron jobs. To keep the function warm (avoid cold starts), set up a free external ping:
